@@ -1,0 +1,90 @@
+<!doctype html>
+<!--
+  RRevX Maps API — แผนที่ + เส้นทาง + ค้นหาสถานที่ ด้วย MapLibre GL JS (ไฟล์เดียว เปิดได้เลย)
+  1. สร้างคีย์เว็บ rx_pub_… ที่ https://rrevx.com/maps/console (ใส่โดเมนของเว็บ หรือ localhost ตอนทดสอบ)
+  2. แทนค่า KEY ด้านล่าง แล้วเปิดไฟล์ผ่าน http://localhost (เช่น `npx serve web`)
+  เอกสาร: https://rrevx.com/maps/docs
+-->
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RRevX Maps API · MapLibre example</title>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+  body { margin: 0; font-family: system-ui, sans-serif; }
+  #map { position: absolute; inset: 0; }
+  .box { position: absolute; top: 10px; left: 10px; z-index: 1; width: min(340px, calc(100% - 20px)); background: #fff; border-radius: 10px; padding: 10px; box-shadow: 0 2px 10px #0003; }
+  .box input { width: 100%; box-sizing: border-box; padding: 8px; font-size: 16px; border: 1px solid #ccc; border-radius: 6px; }
+  .box ul { list-style: none; margin: 6px 0 0; padding: 0; max-height: 40vh; overflow: auto; }
+  .box li { padding: 6px 4px; cursor: pointer; border-bottom: 1px solid #eee; }
+  .box li:hover { background: #f3f6fa; }
+  .box small, #info { color: #555; font-size: 12px; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="box">
+  <input id="q" placeholder="ค้นหาสถานที่ เช่น สยามพารากอน" autocomplete="off">
+  <ul id="list"></ul>
+  <div id="info">คลิกบนแผนที่ 2 จุดเพื่อหาเส้นทาง</div>
+  <small>Places © Overture Maps Foundation (Meta, Microsoft, Foursquare, AllThePlaces)</small>
+</div>
+<script>
+  const KEY = 'rx_pub_YOUR_KEY';           // ← คีย์เว็บของคุณ (ผูกโดเมนไว้แล้ว ใส่ในหน้าเว็บได้)
+  const API = 'https://api.rrevx.com/v1';
+
+  // 1) แผนที่: style 1 ครั้ง = 1 ครั้งเปิดแผนที่ (tiles ไม่คิดเงิน)
+  const map = new maplibregl.Map({
+    container: 'map',
+    style: `${API}/styles/liberty.json?key=${KEY}`,
+    center: [100.5341, 13.7457],            // [lng, lat] สยาม กรุงเทพฯ
+    zoom: 13
+  });
+  map.addControl(new maplibregl.NavigationControl());
+
+  // 2) เส้นทาง: คลิก 2 จุด → /v1/route (รูปแบบเดียวกับ OSRM)
+  let points = [], markers = [];
+  map.on('click', async (e) => {
+    if (points.length === 2) { points = []; markers.forEach((m) => m.remove()); markers = []; }
+    points.push([e.lngLat.lng, e.lngLat.lat]);
+    markers.push(new maplibregl.Marker().setLngLat(e.lngLat).addTo(map));
+    if (points.length < 2) return;
+    const coords = points.map((p) => p.map((n) => n.toFixed(6)).join(',')).join(';');
+    const r = await (await fetch(`${API}/route/${coords}?overview=full&geometries=geojson&key=${KEY}`)).json();
+    if (r.code !== 'Ok') { info.textContent = 'ไม่มีเส้นทาง: ' + r.code; return; }
+    const route = r.routes[0];               // distance (เมตร), duration (วินาที), geometry (GeoJSON)
+    const data = { type: 'Feature', geometry: route.geometry, properties: {} };
+    if (map.getSource('route')) map.getSource('route').setData(data);
+    else {
+      map.addSource('route', { type: 'geojson', data });
+      map.addLayer({ id: 'route', type: 'line', source: 'route', paint: { 'line-color': '#1D6FA3', 'line-width': 5 } });
+    }
+    info.textContent = `${(route.distance / 1000).toFixed(1)} กม. · ${Math.round(route.duration / 60)} นาที`;
+  });
+
+  // 3) ค้นหาขณะพิมพ์: /v1/autocomplete — 1 session = 1 หน่วย ไม่ว่าพิมพ์กี่ตัว
+  let session = crypto.randomUUID(), timer;
+  q.addEventListener('input', () => {
+    clearTimeout(timer);
+    if (!q.value.trim()) { list.innerHTML = ''; return; }
+    timer = setTimeout(async () => {
+      const c = map.getCenter();
+      const p = new URLSearchParams({ q: q.value, session, focus: `${c.lng},${c.lat}`, key: KEY });
+      const { results = [] } = await (await fetch(`${API}/autocomplete?${p}`)).json();
+      list.innerHTML = '';
+      for (const place of results) {
+        const li = document.createElement('li');
+        li.textContent = `${place.name}${place.region ? ' · ' + place.region.name : ''}`;
+        li.onclick = () => {
+          map.flyTo({ center: [place.lng, place.lat], zoom: 16 });
+          list.innerHTML = ''; session = crypto.randomUUID();   // เลือกแล้ว = จบ session
+        };
+        list.append(li);
+      }
+    }, 250);
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+.env
+.env.*
+!.env.example
+node_modules/
+__pycache__/
+.dart_tool/
+build/
+.DS_Store
